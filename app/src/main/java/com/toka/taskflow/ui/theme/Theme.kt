@@ -1,4 +1,4 @@
-package com.TOKA.taskflow.ui.theme
+package com.toka.taskflow.ui.theme
 
 import android.app.Activity
 import android.os.Build

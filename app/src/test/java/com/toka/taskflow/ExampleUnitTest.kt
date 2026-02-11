@@ -1,4 +1,4 @@
-package com.TOKA.taskflow
+package com.toka.taskflow
 
 import org.junit.Test
 
