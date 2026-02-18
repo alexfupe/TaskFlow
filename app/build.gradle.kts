@@ -1,10 +1,8 @@
 plugins {
-    // Usamos IDs manuales para evitar errores de versiones cruzadas
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android") version "2.0.21"
-    // ESTE PLUGIN ES NUEVO Y OBLIGATORIO PARA KOTLIN 2.0 + COMPOSE
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -43,8 +41,6 @@ android {
     buildFeatures {
         compose = true
     }
-
-    // HE BORRADO EL BLOQUE 'composeOptions' PORQUE YA NO HACE FALTA EN KOTLIN 2.0
 }
 
 dependencies {

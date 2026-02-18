@@ -1,5 +1,5 @@
 [versions]
-agp = "9.0.0"
+agp = "8.7.0"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.27"
 
@@ -37,3 +37,5 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+# ESTA ES LA LÍNEA MÁGICA QUE FALTABA
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
