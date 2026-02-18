@@ -96,7 +96,8 @@ interface IncidenciaDao {
     suspend fun update(incidencia: IncidenciaEntity)
 }
 
-@Database(entities = [IncidenciaEntity::class], version = 1)
+// AQUÍ ESTÁ EL CAMBIO: exportSchema = false añadido
+@Database(entities = [IncidenciaEntity::class], version = 1, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun incidenciaDao(): IncidenciaDao
 

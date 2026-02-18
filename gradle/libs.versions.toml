@@ -3,9 +3,9 @@ agp = "8.7.0"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.27"
 
-coreKtx = "1.17.0"
-lifecycleRuntimeKtx = "2.10.0"
-activityCompose = "1.12.3"
+coreKtx = "1.15.0"
+lifecycleRuntimeKtx = "2.8.7"
+activityCompose = "1.9.3"
 composeBom = "2024.09.00"
 
 junit = "4.13.2"
