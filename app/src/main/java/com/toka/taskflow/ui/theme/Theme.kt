@@ -1,6 +1,5 @@
 package com.toka.taskflow.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -15,29 +14,32 @@ import androidx.compose.ui.platform.LocalContext
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
     onPrimary = Color(0xFF381E72),
-    primaryContainer = Color(0xFF4F378B),
+    primaryContainer = Color(0xFF3700B3),
     onPrimaryContainer = Color(0xFFEADDFF),
-
     secondary = PurpleGrey80,
     tertiary = Pink80,
-
     background = NegroFondo,
     surface = GrisTarjeta,
-
+    surfaceVariant = GrisVariante,
     onBackground = TextoBlancoSuave,
-    onSurface = TextoBlancoSuave
+    onSurface = TextoBlancoSuave,
+    onSurfaceVariant = TextoBlancoSuave
 )
 
 private val LightColorScheme = lightColorScheme(
     primary = Purple40,
     secondary = PurpleGrey40,
-    tertiary = Pink40
+    tertiary = Pink40,
+    background = Color.White,
+    surface = Color(0xFFF3F3F3),
+    onSurface = Color.Black
+    // Si faltan colores aquí, usará los de defecto de Material3
 )
 
 @Composable
 fun TaskFlowTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
+    dynamicColor: Boolean = false, // Lo dejamos en false para que use tus colores NegroFondo
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -51,7 +53,7 @@ fun TaskFlowTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
+        typography = Typography, // Asegúrate de tener el archivo Type.kt
         content = content
     )
 }

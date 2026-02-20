@@ -1,11 +1,7 @@
 package com.toka.taskflow
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -52,9 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -63,7 +57,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.toka.taskflow.ui.theme.* import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -75,103 +69,40 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 // ==========================================
-// 1. MODELOS DE DATOS (API e Interfaz)
+// 1. MODELOS DE DATOS Y RETROFIT
 // ==========================================
 
-data class LoginRequest(
-    @SerializedName("username") val username: String,
-    @SerializedName("password") val password: String
-)
+data class LoginRequest(@SerializedName("username") val username: String, @SerializedName("password") val password: String)
+data class LoginResponse(@SerializedName("token") val token: String, @SerializedName("user") val user: UserProfile)
+data class UserProfile(@SerializedName("name") val name: String, @SerializedName("email") val email: String, @SerializedName("role") val role: String)
+data class IncidenciaApi(@SerializedName("id") val id: String? = null, @SerializedName("title") val title: String, @SerializedName("description") val description: String, @SerializedName("status") val status: String, @SerializedName("comentario") val comentario: String? = "")
+data class IncidenciaUI(val id: String = "", val titulo: String, val descripcion: String, val estado: String, val comentario: String, val fotos: List<Uri> = emptyList())
 
-data class LoginResponse(
-    @SerializedName("token") val token: String,
-    @SerializedName("user") val user: UserProfile
-)
-
-data class UserProfile(
-    @SerializedName("name") val name: String,
-    @SerializedName("email") val email: String,
-    @SerializedName("role") val role: String
-)
-
-data class IncidenciaApi(
-    @SerializedName("id") val id: String? = null,
-    @SerializedName("title") val title: String,
-    @SerializedName("description") val description: String,
-    @SerializedName("status") val status: String,
-    @SerializedName("comentario") val comentario: String? = ""
-)
-
-data class IncidenciaUI(
-    val id: String = "",
-    val titulo: String,
-    val descripcion: String,
-    val estado: String,
-    val comentario: String,
-    val fotos: List<Uri> = emptyList()
-)
-
-// Funciones de conversión
-fun IncidenciaApi.toUI(): IncidenciaUI = IncidenciaUI(
-    id = this.id ?: "",
-    titulo = this.title,
-    descripcion = this.description,
-    estado = this.status.uppercase(),
-    comentario = this.comentario ?: ""
-)
-
-fun IncidenciaUI.toApi(): IncidenciaApi = IncidenciaApi(
-    id = if (this.id.isEmpty()) null else this.id,
-    title = this.titulo,
-    description = this.descripcion,
-    status = this.estado.lowercase(),
-    comentario = this.comentario
-)
-
-// ==========================================
-// 2. RETROFIT (CONEXIÓN NUBE)
-// ==========================================
+fun IncidenciaApi.toUI(): IncidenciaUI = IncidenciaUI(id = this.id ?: "", titulo = this.title, descripcion = this.description, estado = this.status.uppercase(), comentario = this.comentario ?: "")
+fun IncidenciaUI.toApi(): IncidenciaApi = IncidenciaApi(id = if (this.id.isEmpty()) null else this.id, title = this.titulo, description = this.descripcion, status = this.estado.lowercase(), comentario = this.comentario)
 
 interface ApiService {
-    @POST("users/login")
-    suspend fun login(@Body request: LoginRequest): LoginResponse
-
-    @GET("tasks/my-tasks")
-    suspend fun getIncidencias(@Header("Authorization") token: String): List<IncidenciaApi>
-
-    @PUT("tasks/{id}")
-    suspend fun updateIncidencia(
-        @Header("Authorization") token: String,
-        @Path("id") id: String,
-        @Body incidencia: IncidenciaApi
-    )
+    @POST("users/login") suspend fun login(@Body request: LoginRequest): LoginResponse
+    @GET("tasks/my-tasks") suspend fun getIncidencias(@Header("Authorization") token: String): List<IncidenciaApi>
+    @PUT("tasks/{id}") suspend fun updateIncidencia(@Header("Authorization") token: String, @Path("id") id: String, @Body incidencia: IncidenciaApi)
 }
 
 object RetrofitClient {
     private const val BASE_URL = "https://scleroblastic-jabberingly-hipolito.ngrok-free.dev/"
-    val apiService: ApiService by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(ApiService::class.java)
-    }
+    val apiService: ApiService by lazy { Retrofit.Builder().baseUrl(BASE_URL).addConverterFactory(GsonConverterFactory.create()).build().create(ApiService::class.java) }
 }
 
 // ==========================================
-// 3. VIEWMODEL (Lógica de API)
+// 2. VIEWMODEL
 // ==========================================
 
 class TaskViewModel : ViewModel() {
     private val _uiState = MutableStateFlow<List<IncidenciaUI>>(emptyList())
     val uiState: StateFlow<List<IncidenciaUI>> = _uiState.asStateFlow()
-
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
     private val _currentUser = MutableStateFlow<UserProfile?>(null)
     val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
-
     private var authToken: String? = null
 
     fun login(u: String, p: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
@@ -179,15 +110,9 @@ class TaskViewModel : ViewModel() {
             _isLoading.value = true
             try {
                 val response = RetrofitClient.apiService.login(LoginRequest(u, p))
-                authToken = "Bearer ${response.token}"
-                _currentUser.value = response.user
-                onSuccess()
-                cargarDatos()
-            } catch (e: Exception) {
-                onError("Error: Usuario o contraseña incorrectos")
-            } finally {
-                _isLoading.value = false
-            }
+                authToken = "Bearer ${response.token}"; _currentUser.value = response.user
+                onSuccess(); cargarDatos()
+            } catch (e: Exception) { onError("Error: Usuario o contraseña incorrectos") } finally { _isLoading.value = false }
         }
     }
 
@@ -195,69 +120,32 @@ class TaskViewModel : ViewModel() {
         val token = authToken ?: return
         viewModelScope.launch {
             _isLoading.value = true
-            try {
-                val apiList = RetrofitClient.apiService.getIncidencias(token)
-                _uiState.value = apiList.map { it.toUI() }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isLoading.value = false
-            }
+            try { _uiState.value = RetrofitClient.apiService.getIncidencias(token).map { it.toUI() } }
+            catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
     }
 
     fun actualizarIncidencia(incidencia: IncidenciaUI) {
         val token = authToken ?: return
         viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                RetrofitClient.apiService.updateIncidencia(token, incidencia.id, incidencia.toApi())
-                cargarDatos()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isLoading.value = false
-            }
+            try { _isLoading.value = true; RetrofitClient.apiService.updateIncidencia(token, incidencia.id, incidencia.toApi()); cargarDatos() }
+            catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
     }
 
-    fun logout() {
-        authToken = null
-        _currentUser.value = null
-        _uiState.value = emptyList()
-    }
+    fun logout() { authToken = null; _currentUser.value = null; _uiState.value = emptyList() }
 }
 
 // ==========================================
-// 4. DISEÑO ORIGINAL (Paleta y MainActivity)
+// 3. MAIN ACTIVITY
 // ==========================================
-
-val DarkColorPalette = darkColorScheme(
-    primary = Color(0xFFBB86FC),
-    onPrimary = Color.Black,
-    primaryContainer = Color(0xFF3700B3),
-    onPrimaryContainer = Color.White,
-    secondary = Color(0xFF03DAC6),
-    onSecondary = Color.Black,
-    background = Color(0xFF121212),
-    onBackground = Color.White,
-    surface = Color(0xFF1E1E1E),
-    onSurface = Color.White,
-    surfaceVariant = Color(0xFF2C2C2C),
-    onSurfaceVariant = Color.White
-)
-
-@Composable
-fun TaskFlowThemeDark(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = DarkColorPalette, content = content)
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            TaskFlowThemeDark {
+            TaskFlowTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val viewModel: TaskViewModel = viewModel()
                     TaskFlowApp(viewModel)
@@ -273,69 +161,28 @@ fun TaskFlowApp(viewModel: TaskViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
 
     NavHost(navController = navController, startDestination = "login") {
-        composable("login") {
-            LoginScreen(viewModel = viewModel, onLoginSuccess = {
-                navController.navigate("dashboard") { popUpTo("login") { inclusive = true } }
-            })
-        }
-
-        composable("dashboard") {
-            currentUser?.let { user ->
-                DashboardScreen(
-                    user = user,
-                    viewModel = viewModel,
-                    onNavigateToProfile = { navController.navigate("profile") },
-                    onNavigateToIncidencias = { navController.navigate("incidencias_list") },
-                    onLogout = {
-                        viewModel.logout()
-                        navController.navigate("login") { popUpTo("dashboard") { inclusive = true } }
-                    }
-                )
-            }
-        }
-
-        composable("profile") {
-            currentUser?.let { user ->
-                ProfileScreen(user = user, onBack = { navController.popBackStack() })
-            }
-        }
-
+        composable("login") { LoginScreen(viewModel, onLoginSuccess = { navController.navigate("dashboard") { popUpTo("login") { inclusive = true } } }) }
+        composable("dashboard") { currentUser?.let { user -> DashboardScreen(user, viewModel, { navController.navigate("profile") }, { navController.navigate("incidencias_list") }, { viewModel.logout(); navController.navigate("login") { popUpTo("dashboard") { inclusive = true } } }) } }
+        composable("profile") { currentUser?.let { user -> ProfileScreen(user, onBack = { navController.popBackStack() }) } }
         composable("incidencias_list") {
             val incidencias by viewModel.uiState.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
-
-            IncidenciasListScreen(
-                incidencias = incidencias,
-                isLoading = isLoading,
-                onBack = { navController.popBackStack() },
-                onRefresh = { viewModel.cargarDatos() },
-                onIncidenciaClick = { incidencia ->
-                    val json = Uri.encode(Gson().toJson(incidencia))
-                    navController.navigate("detalle/$json")
-                }
-            )
+            IncidenciasListScreen(incidencias, isLoading, { navController.popBackStack() }, { viewModel.cargarDatos() }, { incidencia ->
+                val json = Uri.encode(Gson().toJson(incidencia))
+                navController.navigate("detalle/$json")
+            })
         }
-
         composable("detalle/{incidenciaJson}") { backStackEntry ->
             val json = backStackEntry.arguments?.getString("incidenciaJson")
             val incidencia = remember { Gson().fromJson(json, IncidenciaUI::class.java) }
             val incidenciaState = remember { mutableStateOf(incidencia) }
-
-            DetalleIncidenciaScreen(
-                incidencia = incidenciaState.value,
-                onUpdate = { nuevaIncidencia -> incidenciaState.value = nuevaIncidencia },
-                onSaveAndExit = {
-                    viewModel.actualizarIncidencia(incidenciaState.value)
-                    navController.popBackStack()
-                },
-                onBack = { navController.popBackStack() }
-            )
+            DetalleIncidenciaScreen(incidenciaState.value, { incidenciaState.value = it }, { viewModel.actualizarIncidencia(incidenciaState.value); navController.popBackStack() }, { navController.popBackStack() })
         }
     }
 }
 
 // ==========================================
-// 5. PANTALLAS (VISUAL ORIGINAL RECONSTRUIDO)
+// 4. PANTALLAS
 // ==========================================
 
 @Composable
@@ -349,21 +196,17 @@ fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
         Icon(Icons.Default.Person, null, modifier = Modifier.size(80.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(16.dp))
         Text("TaskFlow", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        Text("Gestión de Tareas", fontSize = 14.sp, color = Color.Gray)
+        Text("Gestión de Tareas", fontSize = 14.sp, color = TextoGris)
         Spacer(modifier = Modifier.height(32.dp))
 
-        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Usuario (Username)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Usuario") }, modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña (Password)") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(24.dp))
 
         if (isLoading) CircularProgressIndicator()
         else {
-            Button(onClick = {
-                if (username.isNotEmpty() && password.isNotEmpty()) {
-                    viewModel.login(username, password, onLoginSuccess) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-                } else Toast.makeText(context, "Rellena los campos", Toast.LENGTH_SHORT).show()
-            }, modifier = Modifier.fillMaxWidth()) { Text("Entrar") }
+            Button(onClick = { if (username.isNotEmpty() && password.isNotEmpty()) viewModel.login(username, password, onLoginSuccess) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } else Toast.makeText(context, "Rellena los campos", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth()) { Text("Entrar") }
         }
     }
 }
@@ -377,7 +220,7 @@ fun DashboardScreen(user: UserProfile, viewModel: TaskViewModel, onNavigateToPro
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("TaskFlow Panel", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
+                title = { Text("TaskFlow Panel", fontWeight = FontWeight.Bold) },
                 actions = {
                     if (isLoading) CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(end = 8.dp), strokeWidth = 2.dp)
                     else IconButton(onClick = { viewModel.cargarDatos() }) { Icon(Icons.Default.Refresh, null) }
@@ -395,12 +238,13 @@ fun DashboardScreen(user: UserProfile, viewModel: TaskViewModel, onNavigateToPro
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("¡Bienvenido,", fontSize = 28.sp, color = Color.Gray)
-            Text(user.name + "!", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("¡Bienvenido,", fontSize = 28.sp, color = TextoGris)
+            Text("${user.name}!", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.height(48.dp))
             Card(
                 modifier = Modifier.fillMaxWidth().height(150.dp).clickable { onNavigateToIncidencias() },
-                elevation = CardDefaults.cardElevation(6.dp)
+                elevation = CardDefaults.cardElevation(6.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.AutoMirrored.Filled.List, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
@@ -420,13 +264,13 @@ fun ProfileScreen(user: UserProfile, onBack: () -> Unit) {
                 Text(text = user.name.take(1).uppercase(), fontSize = 48.sp, color = Color.Black, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(24.dp))
-            Text("Nombre", fontSize = 14.sp, color = Color.Gray)
+            Text("Nombre", fontSize = 14.sp, color = TextoGris)
             Text(user.name, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Correo Electrónico", fontSize = 14.sp, color = Color.Gray)
+            Text("Correo Electrónico", fontSize = 14.sp, color = TextoGris)
             Text(user.email, fontSize = 18.sp)
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Rol / Cargo", fontSize = 14.sp, color = Color.Gray)
+            Text("Rol / Cargo", fontSize = 14.sp, color = TextoGris)
             BadgeEstado(user.role)
         }
     }
@@ -441,7 +285,7 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, o
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Mis Tareas", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
+                title = { Text("Mis Tareas", fontWeight = FontWeight.Bold) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
                 actions = { IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, null) } }
             )
@@ -466,15 +310,19 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, o
 
 @Composable
 fun TaskItem(incidencia: IncidenciaUI, onClick: (IncidenciaUI) -> Unit) {
-    val statusColor = when(incidencia.estado) { "PENDIENTE" -> Color(0xFFFF9800); "PROCESO" -> Color(0xFF2196F3); "HECHO" -> Color(0xFF4CAF50); else -> Color.Gray }
-    Card(modifier = Modifier.fillMaxWidth().clickable { onClick(incidencia) }, elevation = CardDefaults.cardElevation(4.dp)) {
+    val statusColor = when(incidencia.estado) { "PENDIENTE" -> StatusPendiente; "PROCESO" -> StatusProceso; "HECHO" -> StatusHecho; else -> TextoGris }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick(incidencia) },
+        elevation = CardDefaults.cardElevation(4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             Box(modifier = Modifier.fillMaxHeight().width(6.dp).background(statusColor))
             Column(modifier = Modifier.weight(1f).padding(16.dp)) {
                 Text(incidencia.titulo, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Text(incidencia.descripcion, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray)
+                Text(incidencia.descripcion, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = TextoGris)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.align(Alignment.CenterVertically).padding(end = 16.dp))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, modifier = Modifier.align(Alignment.CenterVertically).padding(end = 16.dp), tint = TextoGris)
         }
     }
 }
@@ -502,7 +350,7 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
         Column(modifier = Modifier.weight(1f)) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(incidencia.titulo, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text(incidencia.descripcion, fontSize = 16.sp, color = Color.Gray)
+            Text(incidencia.descripcion, fontSize = 16.sp, color = TextoGris)
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Estado:", fontWeight = FontWeight.Bold)
@@ -513,7 +361,7 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
             if (isEditing) {
                 Row(verticalAlignment = Alignment.Top) {
                     OutlinedTextField(value = comentarioTemp, onValueChange = { comentarioTemp = it }, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { onUpdate(incidencia.copy(comentario = comentarioTemp)); isEditing = false }) { Icon(Icons.Default.Check, null) }
+                    IconButton(onClick = { onUpdate(incidencia.copy(comentario = comentarioTemp)); isEditing = false }) { Icon(Icons.Default.Check, null, tint = StatusHecho) }
                 }
             } else {
                 Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -525,7 +373,7 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Evidencias Local (${fotosState.size})", fontWeight = FontWeight.Bold)
                 Button(onClick = { val uri = crearArchivoImagen(context); tempPhotoUri.value = uri; cameraLauncher.launch(uri) }) {
-                    Icon(Icons.Default.Add, null); Text("Foto")
+                    Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("Foto")
                 }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
@@ -537,15 +385,16 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
                 }
             }
         }
-        Button(onClick = onSaveAndExit, modifier = Modifier.fillMaxWidth().height(50.dp)) { Icon(Icons.Default.Check, null); Text(" GUARDAR EN NUBE") }
+        Button(onClick = onSaveAndExit, modifier = Modifier.fillMaxWidth().height(50.dp)) { Icon(Icons.Default.Check, null); Spacer(Modifier.width(8.dp)); Text("GUARDAR EN NUBE") }
     }
 }
 
 // --- UTILIDADES ---
+
 @Composable
 fun FilterChipItem(text: String, selected: Boolean, onClick: () -> Unit) {
     val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val tc = if (selected) Color.Black else Color.Gray
+    val tc = if (selected) Color.Black else TextoGris
     Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(bg).clickable { onClick() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text(text, color = tc, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }
@@ -564,7 +413,7 @@ fun DropdownEstado(current: String, onChange: (String) -> Unit) {
 
 @Composable
 fun BadgeEstado(estado: String) {
-    val color = when(estado.uppercase()) { "HECHO" -> Color(0xFF4CAF50); "PENDIENTE" -> Color(0xFFFF9800); else -> Color(0xFF2196F3) }
+    val color = when(estado.uppercase()) { "HECHO" -> StatusHecho; "PENDIENTE" -> StatusPendiente; else -> StatusProceso }
     Text(estado, Modifier.background(color, RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 4.dp), color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
 }
 
