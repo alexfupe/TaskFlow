@@ -32,7 +32,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color // ¡AQUÍ ESTÁ LA LÍNEA QUE FALTABA!
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +53,7 @@ import androidx.navigation.compose.rememberNavController
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.toka.taskflow.ui.theme.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -93,7 +94,6 @@ interface ApiService {
     @PUT("tasks/{id}") suspend fun updateIncidencia(@Header("Authorization") token: String, @Path("id") id: String, @Body incidencia: IncidenciaApi)
     @POST("tasks/") suspend fun createIncidencia(@Header("Authorization") token: String, @Body incidencia: IncidenciaApi): Map<String, Any>
 
-    // Endpoint para borrar tareas
     @DELETE("tasks/{id}") suspend fun deleteIncidencia(@Header("Authorization") token: String, @Path("id") id: String)
 }
 
@@ -160,17 +160,27 @@ class TaskViewModel : ViewModel() {
         }
     }
 
-    // Función para borrar la tarea de la base de datos
+    // MODIFICADO: Añadimos corrutinas y evitamos crasheos en el proceso de borrado
     fun borrarTarea(id: String, onComplete: (Boolean, String) -> Unit) {
         val token = authToken ?: return
         viewModelScope.launch {
             try {
+                // Primero se hace la petición al servidor (MongoDB)
                 RetrofitClient.apiService.deleteIncidencia(token, id)
-                cargarDatos() // Recargamos los datos para que desaparezca de la lista
+
+                // Si la petición ha ido bien, eliminamos el elemento de la lista local en memoria inmediatamente.
+                // Esto previene que Compose intente dibujar algo que ya no existe mientras carga de nuevo los datos.
+                _uiState.value = _uiState.value.filter { it.id != id }
+
+                // Opcional: Podrías hacer un cargarDatos() en segundo plano, pero no es estrictamente necesario
+                // ya que acabas de actualizar el estado local y ambas fuentes están sincronizadas.
+
                 onComplete(true, "Tarea eliminada")
             } catch (e: Exception) {
                 e.printStackTrace()
                 onComplete(false, "Error al eliminar la tarea")
+                // Si hay un error, recargamos los datos para asegurarnos de que la lista refleje lo que hay en MongoDB
+                cargarDatos()
             }
         }
     }
@@ -181,7 +191,7 @@ class TaskViewModel : ViewModel() {
             _isLoading.value = true
             try {
                 RetrofitClient.apiService.changePassword(token, ChangePasswordRequest(nuevaPassword))
-                onComplete(true, "Contraseña actualizada en la base de datos")
+                onComplete(true, "Contraseña actualizada")
             } catch (e: Exception) {
                 e.printStackTrace()
                 onComplete(false, "Error al cambiar la contraseña")
@@ -227,7 +237,6 @@ fun TaskFlowApp(viewModel: TaskViewModel) {
             val incidencias by viewModel.uiState.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
 
-            // Pasamos el viewModel para poder usar la función borrarTarea
             IncidenciasListScreen(incidencias, isLoading, viewModel, { navController.popBackStack() }, { viewModel.cargarDatos() }, { incidencia ->
                 val json = Uri.encode(Gson().toJson(incidencia))
                 navController.navigate("detalle/$json")
@@ -250,8 +259,6 @@ fun TaskFlowApp(viewModel: TaskViewModel) {
 fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-
-    // Nueva variable para controlar si la contraseña se ve o no
     var passwordVisible by remember { mutableStateOf(false) }
 
     val isLoading by viewModel.isLoading.collectAsState()
@@ -284,7 +291,6 @@ fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            // TextField con el icono del "ojo" para la contraseña
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
@@ -310,7 +316,7 @@ fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = NegroFondo // Forzamos que el contenido sea NegroFondo
+                        contentColor = NegroFondo
                     )
                 ) {
                     Text("ENTRAR", color = NegroFondo, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -448,7 +454,7 @@ fun ProfileScreen(user: UserProfile, viewModel: TaskViewModel, onBack: () -> Uni
 
             HorizontalDivider()
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Cambio de Contraseña", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Seguridad", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
@@ -497,6 +503,7 @@ fun ProfileScreen(user: UserProfile, viewModel: TaskViewModel, onBack: () -> Uni
     }
 }
 
+// MODIFICADO: Ajuste en la gestión del SwipeToDismiss para evitar crasheos
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, viewModel: TaskViewModel, onBack: () -> Unit, onRefresh: () -> Unit, onIncidenciaClick: (IncidenciaUI) -> Unit) {
@@ -520,28 +527,38 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, v
                 FilterChipItem("En Proceso", filtroSeleccionado == "PROCESO") { filtroSeleccionado = "PROCESO" }
                 FilterChipItem("Hecho", filtroSeleccionado == "HECHO") { filtroSeleccionado = "HECHO" }
             }
-            if (isLoading) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+            if (isLoading && filtradas.isEmpty()) {
+                // Solo mostramos el indicador central si la lista está vacía, para no interrumpir la experiencia al borrar
+                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+            }
             else {
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // key = { it.id } es crucial para que Compose sepa exactamente qué elemento se borra al deslizar
+
                     items(filtradas, key = { it.id }) { incidencia ->
+
+                        // Utilizamos un scope para las animaciones o lógica de borrado sin bloquear la UI
+                        val scope = rememberCoroutineScope()
 
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { dismissValue ->
                                 if (dismissValue == SwipeToDismissBoxValue.StartToEnd) {
-                                    viewModel.borrarTarea(incidencia.id) { _, msg ->
-                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    // Iniciamos el borrado sin bloquear
+                                    scope.launch {
+                                        viewModel.borrarTarea(incidencia.id) { success, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }
                                     }
-                                    true
+                                    true // Le decimos a Compose que deje deslizar visualmente el elemento
                                 } else {
                                     false
                                 }
                             }
                         )
 
+                        // Renderizamos el item de lista
                         SwipeToDismissBox(
                             state = dismissState,
-                            enableDismissFromEndToStart = false, // Solo permite deslizar hacia la derecha
+                            enableDismissFromEndToStart = false,
                             backgroundContent = {
                                 val color = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) {
                                     MaterialTheme.colorScheme.error
