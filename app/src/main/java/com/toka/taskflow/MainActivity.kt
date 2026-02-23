@@ -53,7 +53,6 @@ import androidx.navigation.compose.rememberNavController
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.toka.taskflow.ui.theme.*
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,21 +78,33 @@ data class IncidenciaApi(
     @SerializedName("title") val title: String,
     @SerializedName("description") val description: String,
     @SerializedName("status") val status: String,
-    @SerializedName("comentario") val comentario: String? = ""
+    @SerializedName("comentario") val comentario: String? = "",
+    @SerializedName("createdAt") val createdAt: String? = null,
+    @SerializedName("finishedAt") val finishedAt: String? = null
 )
 
-data class IncidenciaUI(val id: String = "", val titulo: String, val descripcion: String, val estado: String, val comentario: String, val fotos: List<Uri> = emptyList())
+data class IncidenciaUI(
+    val id: String = "",
+    val titulo: String,
+    val descripcion: String,
+    val estado: String,
+    val comentario: String,
+    val fotos: List<Uri> = emptyList(),
+    val createdAt: String = "",
+    val finishedAt: String = ""
+)
 
-fun IncidenciaApi.toUI(): IncidenciaUI = IncidenciaUI(id = this.id ?: "", titulo = this.title, descripcion = this.description, estado = this.status.uppercase(), comentario = this.comentario ?: "")
+fun IncidenciaApi.toUI(): IncidenciaUI = IncidenciaUI(id = this.id ?: "", titulo = this.title, descripcion = this.description, estado = this.status.uppercase(), comentario = this.comentario ?: "", createdAt = this.createdAt ?: "", finishedAt = this.finishedAt ?: "")
 fun IncidenciaUI.toApi(): IncidenciaApi = IncidenciaApi(id = if (this.id.isNullOrEmpty()) null else this.id, title = this.titulo, description = this.descripcion, status = this.estado.lowercase(), comentario = this.comentario)
 
 interface ApiService {
     @POST("users/login") suspend fun login(@Body request: LoginRequest): LoginResponse
+    @POST("users/logout") suspend fun logout(@Header("Authorization") token: String) // NUEVA: Avisar cierre sesión
     @PUT("users/change-password") suspend fun changePassword(@Header("Authorization") token: String, @Body request: ChangePasswordRequest)
+
     @GET("tasks/my-tasks") suspend fun getIncidencias(@Header("Authorization") token: String): List<IncidenciaApi>
     @PUT("tasks/{id}") suspend fun updateIncidencia(@Header("Authorization") token: String, @Path("id") id: String, @Body incidencia: IncidenciaApi)
     @POST("tasks/") suspend fun createIncidencia(@Header("Authorization") token: String, @Body incidencia: IncidenciaApi): Map<String, Any>
-
     @DELETE("tasks/{id}") suspend fun deleteIncidencia(@Header("Authorization") token: String, @Path("id") id: String)
 }
 
@@ -119,9 +130,11 @@ class TaskViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
+                // El backend ahora guarda la hora automáticamente al hacer login
                 val response = RetrofitClient.apiService.login(LoginRequest(u, p))
                 authToken = "Bearer ${response.token}"; _currentUser.value = response.user
-                onSuccess(); cargarDatos()
+                onSuccess()
+                cargarDatos()
             } catch (e: Exception) {
                 e.printStackTrace()
                 onError("Error: Usuario o contraseña incorrectos")
@@ -155,31 +168,26 @@ class TaskViewModel : ViewModel() {
     fun actualizarIncidencia(incidencia: IncidenciaUI) {
         val token = authToken ?: return
         viewModelScope.launch {
-            try { _isLoading.value = true; RetrofitClient.apiService.updateIncidencia(token, incidencia.id, incidencia.toApi()); cargarDatos() }
+            try {
+                _isLoading.value = true
+                RetrofitClient.apiService.updateIncidencia(token, incidencia.id, incidencia.toApi())
+                // Recargamos para que el backend nos devuelva la fecha de fin si se puso en HECHO
+                cargarDatos()
+            }
             catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
         }
     }
 
-    // MODIFICADO: Añadimos corrutinas y evitamos crasheos en el proceso de borrado
     fun borrarTarea(id: String, onComplete: (Boolean, String) -> Unit) {
         val token = authToken ?: return
         viewModelScope.launch {
             try {
-                // Primero se hace la petición al servidor (MongoDB)
                 RetrofitClient.apiService.deleteIncidencia(token, id)
-
-                // Si la petición ha ido bien, eliminamos el elemento de la lista local en memoria inmediatamente.
-                // Esto previene que Compose intente dibujar algo que ya no existe mientras carga de nuevo los datos.
                 _uiState.value = _uiState.value.filter { it.id != id }
-
-                // Opcional: Podrías hacer un cargarDatos() en segundo plano, pero no es estrictamente necesario
-                // ya que acabas de actualizar el estado local y ambas fuentes están sincronizadas.
-
                 onComplete(true, "Tarea eliminada")
             } catch (e: Exception) {
                 e.printStackTrace()
                 onComplete(false, "Error al eliminar la tarea")
-                // Si hay un error, recargamos los datos para asegurarnos de que la lista refleje lo que hay en MongoDB
                 cargarDatos()
             }
         }
@@ -201,7 +209,16 @@ class TaskViewModel : ViewModel() {
         }
     }
 
-    fun logout() { authToken = null; _currentUser.value = null; _uiState.value = emptyList() }
+    fun logout() {
+        val token = authToken
+        viewModelScope.launch {
+            // Mandamos el aviso al backend para que registre la hora de salida
+            if (token != null) {
+                try { RetrofitClient.apiService.logout(token) } catch (e: Exception) { e.printStackTrace() }
+            }
+            authToken = null; _currentUser.value = null; _uiState.value = emptyList()
+        }
+    }
 }
 
 // ==========================================
@@ -260,51 +277,22 @@ fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-
     val isLoading by viewModel.isLoading.collectAsState()
     val context = LocalContext.current
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .systemBarsPadding()
-            .imePadding(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding(), contentAlignment = Alignment.Center) {
+        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("TaskFlow", fontSize = 48.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
             Text("Gestión de Tareas", fontSize = 16.sp, color = TextoGris)
             Spacer(modifier = Modifier.height(48.dp))
 
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("Usuario") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
+            OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Usuario") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
             Spacer(modifier = Modifier.height(16.dp))
-
             OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Contraseña") },
+                value = password, onValueChange = { password = it }, label = { Text("Contraseña") },
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    val icon = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                    val description = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(imageVector = icon, contentDescription = description)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff, null) } },
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)
             )
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -312,15 +300,9 @@ fun LoginScreen(viewModel: TaskViewModel, onLoginSuccess: () -> Unit) {
             else {
                 Button(
                     onClick = { if (username.isNotEmpty() && password.isNotEmpty()) viewModel.login(username, password, onLoginSuccess) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } else Toast.makeText(context, "Rellena los campos", Toast.LENGTH_SHORT).show() },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = NegroFondo
-                    )
-                ) {
-                    Text("ENTRAR", color = NegroFondo, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                }
+                    modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)
+                ) { Text("ENTRAR", color = NegroFondo, fontWeight = FontWeight.Bold, fontSize = 18.sp) }
             }
         }
     }
@@ -361,11 +343,7 @@ fun DashboardScreen(user: UserProfile, viewModel: TaskViewModel, onProfile: () -
 
 @Composable
 fun DashboardCard(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().height(110.dp).clickable { onClick() },
-        elevation = CardDefaults.cardElevation(4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth().height(110.dp).clickable { onClick() }, elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             Icon(icon, null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.width(16.dp))
@@ -383,15 +361,9 @@ fun NuevaTareaScreen(viewModel: TaskViewModel, onBack: () -> Unit) {
     val isLoading by viewModel.isLoading.collectAsState()
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Nueva Tarea", fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }
-            )
-        }
+        topBar = { TopAppBar(title = { Text("Nueva Tarea", fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }) }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().padding(24.dp).verticalScroll(rememberScrollState())) {
-
             OutlinedTextField(value = titulo, onValueChange = { titulo = it }, label = { Text("Título") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text("Descripción") }, modifier = Modifier.fillMaxWidth().height(120.dp), shape = RoundedCornerShape(12.dp))
@@ -403,14 +375,10 @@ fun NuevaTareaScreen(viewModel: TaskViewModel, onBack: () -> Unit) {
             else {
                 Button(
                     onClick = { if (titulo.isNotEmpty()) viewModel.crearTarea(titulo, desc, comentario, onBack) },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = NegroFondo
-                    )
+                    modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null, tint = NegroFondo)
+                    Icon(Icons.Default.Check, null, tint = NegroFondo)
                     Spacer(Modifier.width(8.dp))
                     Text("GUARDAR CAMBIOS", color = NegroFondo, fontWeight = FontWeight.Bold)
                 }
@@ -428,18 +396,10 @@ fun ProfileScreen(user: UserProfile, viewModel: TaskViewModel, onBack: () -> Uni
     val context = LocalContext.current
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Mi Perfil", fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }
-            )
-        }
+        topBar = { TopAppBar(title = { Text("Mi Perfil", fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }) }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-
-            Box(modifier = Modifier.size(120.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
-                Text(text = user.name.take(1).uppercase(), fontSize = 48.sp, color = NegroFondo, fontWeight = FontWeight.Bold)
-            }
+            Box(modifier = Modifier.size(120.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) { Text(text = user.name.take(1).uppercase(), fontSize = 48.sp, color = NegroFondo, fontWeight = FontWeight.Bold) }
             Spacer(modifier = Modifier.height(24.dp))
             Text("Nombre", fontSize = 14.sp, color = TextoGris)
             Text(user.name, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -449,66 +409,47 @@ fun ProfileScreen(user: UserProfile, viewModel: TaskViewModel, onBack: () -> Uni
             Spacer(modifier = Modifier.height(16.dp))
             Text("Rol / Cargo", fontSize = 14.sp, color = TextoGris)
             BadgeEstado(user.role)
-
             Spacer(modifier = Modifier.height(48.dp))
-
             HorizontalDivider()
             Spacer(modifier = Modifier.height(16.dp))
             Text("Seguridad", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
-                value = nuevaPassword,
-                onValueChange = { nuevaPassword = it },
-                label = { Text("Nueva Contraseña") },
+                value = nuevaPassword, onValueChange = { nuevaPassword = it }, label = { Text("Nueva Contraseña") },
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    val icon = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                    val description = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(imageVector = icon, contentDescription = description)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff, null) } },
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)
             )
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (isLoading) {
-                CircularProgressIndicator()
-            } else {
+            if (isLoading) CircularProgressIndicator()
+            else {
                 Button(
                     onClick = {
-                        if (nuevaPassword.isNotEmpty()) {
-                            viewModel.cambiarPassword(nuevaPassword) { success, msg ->
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                if(success) nuevaPassword = ""
-                            }
-                        } else {
-                            Toast.makeText(context, "Escribe una contraseña", Toast.LENGTH_SHORT).show()
-                        }
+                        if (nuevaPassword.isNotEmpty()) { viewModel.cambiarPassword(nuevaPassword) { success, msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show(); if(success) nuevaPassword = "" } }
+                        else Toast.makeText(context, "Escribe una contraseña", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = NegroFondo
-                    )
-                ) {
-                    Text("ACTUALIZAR CONTRASEÑA", color = NegroFondo, fontWeight = FontWeight.Bold)
-                }
+                    modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)
+                ) { Text("ACTUALIZAR CONTRASEÑA", color = NegroFondo, fontWeight = FontWeight.Bold) }
             }
         }
     }
 }
 
-// MODIFICADO: Ajuste en la gestión del SwipeToDismiss para evitar crasheos
+// Búsqueda implementada
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, viewModel: TaskViewModel, onBack: () -> Unit, onRefresh: () -> Unit, onIncidenciaClick: (IncidenciaUI) -> Unit) {
     var filtroSeleccionado by remember { mutableStateOf("TODOS") }
-    val filtradas = if (filtroSeleccionado == "TODOS") incidencias else incidencias.filter { it.estado == filtroSeleccionado }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filtradas = incidencias.filter {
+        (filtroSeleccionado == "TODOS" || it.estado == filtroSeleccionado) &&
+                (it.titulo.contains(searchQuery, ignoreCase = true) || it.descripcion.contains(searchQuery, ignoreCase = true))
+    }
+
     val context = LocalContext.current
 
     Scaffold(
@@ -521,62 +462,49 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, v
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            // BUSCADOR DE TAREAS
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text("Buscar tareas...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Buscar") },
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true
+            )
+
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChipItem("Todos", filtroSeleccionado == "TODOS") { filtroSeleccionado = "TODOS" }
                 FilterChipItem("Pendientes", filtroSeleccionado == "PENDIENTE") { filtroSeleccionado = "PENDIENTE" }
                 FilterChipItem("En Proceso", filtroSeleccionado == "PROCESO") { filtroSeleccionado = "PROCESO" }
                 FilterChipItem("Hecho", filtroSeleccionado == "HECHO") { filtroSeleccionado = "HECHO" }
             }
-            if (isLoading && filtradas.isEmpty()) {
-                // Solo mostramos el indicador central si la lista está vacía, para no interrumpir la experiencia al borrar
+
+            if (isLoading && filtradas.isEmpty() && searchQuery.isEmpty()) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            }
-            else {
+            } else if (filtradas.isEmpty()) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No se encontraron tareas", color = TextoGris) }
+            } else {
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-
                     items(filtradas, key = { it.id }) { incidencia ->
-
-                        // Utilizamos un scope para las animaciones o lógica de borrado sin bloquear la UI
                         val scope = rememberCoroutineScope()
-
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { dismissValue ->
                                 if (dismissValue == SwipeToDismissBoxValue.StartToEnd) {
-                                    // Iniciamos el borrado sin bloquear
-                                    scope.launch {
-                                        viewModel.borrarTarea(incidencia.id) { success, msg ->
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    true // Le decimos a Compose que deje deslizar visualmente el elemento
-                                } else {
-                                    false
-                                }
+                                    scope.launch { viewModel.borrarTarea(incidencia.id) { _, msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() } }
+                                    true
+                                } else false
                             }
                         )
 
-                        // Renderizamos el item de lista
                         SwipeToDismissBox(
-                            state = dismissState,
-                            enableDismissFromEndToStart = false,
+                            state = dismissState, enableDismissFromEndToStart = false,
                             backgroundContent = {
-                                val color = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) {
-                                    MaterialTheme.colorScheme.error
-                                } else Color.Transparent
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(color, RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 16.dp),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.onError)
-                                }
+                                val color = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) MaterialTheme.colorScheme.error else Color.Transparent
+                                Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(4.dp)).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) { Icon(Icons.Default.Delete, "Eliminar", tint = MaterialTheme.colorScheme.onError) }
                             }
-                        ) {
-                            TaskItem(incidencia, onIncidenciaClick)
-                        }
+                        ) { TaskItem(incidencia, onIncidenciaClick) }
                     }
                 }
             }
@@ -587,11 +515,7 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, v
 @Composable
 fun TaskItem(incidencia: IncidenciaUI, onClick: (IncidenciaUI) -> Unit) {
     val statusColor = when(incidencia.estado) { "PENDIENTE" -> StatusPendiente; "PROCESO" -> StatusProceso; "HECHO" -> StatusHecho; else -> TextoGris }
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick(incidencia) },
-        elevation = CardDefaults.cardElevation(4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onClick(incidencia) }, elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             Box(modifier = Modifier.fillMaxHeight().width(6.dp).background(statusColor))
             Column(modifier = Modifier.weight(1f).padding(16.dp)) {
@@ -620,19 +544,22 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
     if (photoToView != null) FullScreenImageDialog(uri = photoToView!!, onDismiss = { photoToView = null })
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Detalle de la Tarea", fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }
-            )
-        }
+        topBar = { TopAppBar(title = { Text("Detalle de la Tarea", fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }) }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp)) {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-
                 Text(incidencia.titulo, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(incidencia.descripcion, fontSize = 16.sp, color = TextoGris)
+
+                // TEXTOS DE LAS FECHAS GENERADAS POR EL SERVIDOR
+                if (incidencia.createdAt.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Publicada: ${incidencia.createdAt}", fontSize = 12.sp, color = TextoGris)
+                }
+                if (incidencia.finishedAt.isNotEmpty() && incidencia.estado == "HECHO") {
+                    Text("Finalizada: ${incidencia.finishedAt}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
@@ -661,12 +588,9 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
                     Text("Evidencias Locales (${fotosState.size})", fontWeight = FontWeight.Bold)
                     Button(
                         onClick = { val uri = crearArchivoImagen(context); tempPhotoUri.value = uri; cameraLauncher.launch(uri) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = NegroFondo
-                        )
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = NegroFondo)
+                        Icon(Icons.Default.Add, null, tint = NegroFondo)
                         Spacer(Modifier.width(4.dp))
                         Text("Foto", color = NegroFondo, fontWeight = FontWeight.Bold)
                     }
@@ -682,14 +606,10 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
             }
             Spacer(modifier = Modifier.height(16.dp))
             Button(
-                onClick = onSaveAndExit,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = NegroFondo
-                )
+                onClick = onSaveAndExit, modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)
             ) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = NegroFondo)
+                Icon(Icons.Default.Check, null, tint = NegroFondo)
                 Spacer(Modifier.width(8.dp))
                 Text("GUARDAR CAMBIOS", color = NegroFondo, fontWeight = FontWeight.Bold)
             }
@@ -712,13 +632,7 @@ fun FilterChipItem(text: String, selected: Boolean, onClick: () -> Unit) {
 fun DropdownEstado(current: String, onChange: (String) -> Unit) {
     var exp by remember { mutableStateOf(false) }
     Box {
-        Button(
-            onClick = { exp = true },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = NegroFondo
-            )
-        ) { Text(current, color = NegroFondo, fontWeight = FontWeight.Bold) }
+        Button(onClick = { exp = true }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = NegroFondo)) { Text(current, color = NegroFondo, fontWeight = FontWeight.Bold) }
         DropdownMenu(expanded = exp, onDismissRequest = { exp = false }) {
             listOf("PENDIENTE", "PROCESO", "HECHO").forEach { s -> DropdownMenuItem(text = { Text(s) }, onClick = { onChange(s); exp = false }) }
         }
@@ -735,16 +649,9 @@ fun BadgeEstado(estado: String) {
 fun ImagenConRotacion(uri: Uri, thumbnail: Boolean) {
     val context = LocalContext.current
     val bitmap = remember(uri) {
-        try {
-            val input = context.contentResolver.openInputStream(uri)
-            val original = BitmapFactory.decodeStream(input)
-            input?.close()
-            original
-        } catch (e: Exception) { null }
+        try { val input = context.contentResolver.openInputStream(uri); val original = BitmapFactory.decodeStream(input); input?.close(); original } catch (e: Exception) { null }
     }
-    bitmap?.let {
-        Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = if (thumbnail) Modifier.size(100.dp).clip(RoundedCornerShape(8.dp)) else Modifier.fillMaxWidth(), contentScale = ContentScale.Crop)
-    }
+    bitmap?.let { Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = if (thumbnail) Modifier.size(100.dp).clip(RoundedCornerShape(8.dp)) else Modifier.fillMaxWidth(), contentScale = ContentScale.Crop) }
 }
 
 @Composable
