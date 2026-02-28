@@ -1,36 +1,37 @@
-TaskFlow 📋
-App nativa en Android para la gestión corporativa de tareas e incidencias, conectada a una API REST remota.
+# TaskFlow 📋 
 
-✨ Características
-Autenticación: Login seguro basado en tokens.
+**Asignatura:** Programación Multimedia y Dispositivos Móviles (Android)
 
-Gestión de Tareas: Crear, listar, buscar, filtrar por estado, editar y eliminar (swipe to dismiss).
+## 📖 Contexto del Proyecto
+Aplicación corporativa Android para gestionar tareas e incidencias. Permite a los empleados revisar labores, reportar problemas, actualizar estados y adjuntar fotos en tiempo real.
 
-Evidencias: Captura de fotos desde la cámara nativa para adjuntar a las incidencias.
+## ✨ Requisitos y Funcionalidades
+* **Autenticación:** Login seguro conectado a la API.
+* **Dashboard:** Panel principal con accesos directos al listado y creación de tareas.
+* **Mis Tareas:** Lista de incidencias con buscador de texto y filtros por estado (Todos, Pendientes, En Proceso, Hecho). Borrado con *Swipe to dismiss*.
+* **Detalle y Evidencias:** Vista detallada de la tarea, edición de estado/comentarios y captura de fotos con la cámara nativa.
+* **Nueva Tarea:** Formulario de creación de incidencias.
+* **Perfil:** Visualización de datos del empleado y cambio de contraseña.
 
-Perfil: Visualización de datos de usuario y cambio de contraseña.
+## 🛠️ Tecnologías
+* **Android:** Kotlin, Jetpack Compose, MVVM, Retrofit2, Coroutines.
+* **Backend:** API REST en Python.
 
-🛠️ Tecnologías
-Android: Kotlin, Jetpack Compose, Arquitectura MVVM, Retrofit.
+## 🚀 Instalación y Ejecución
 
-Backend: Python + ngrok.
-
-🚀 Instalación y Ejecución
-1. Levantar el Backend
-Ejecuta la API de Python y expón el puerto local con ngrok:
-
-Bash
+### 1. Levantar el Backend (API local)
+Ejecuta la API y expón el puerto con ngrok:
+```bash
 python app.py
 ngrok http 5000
-(Copia la URL https://... generada por ngrok).
+````
+*(Copia la URL `https://...` generada por ngrok).*
 
-2. Configurar la App (Android)
-Clona el repositorio:
+### 2. Configurar el Frontend (Android)
 
-Bash
-git clone https://github.com/TU_USUARIO/TU_REPOSITORIO.git
-Abre el proyecto en Android Studio.
-
-Ve a la configuración de Retrofit (RetrofitClient) y cambia la variable BASE_URL por tu enlace de ngrok (asegúrate de que termine en /).
-
-Sincroniza Gradle y ejecuta la app.
+```bash
+git clone [https://github.com/alexfupe/TaskFlow.git](https://github.com/alexfupe/TaskFlow.git)
+````
+1. Abre el proyecto en **Android Studio**.
+2. Ve a `RetrofitClient` y pega la URL de ngrok en `BASE_URL` (asegúrate de que acabe en `/`).
+3. Sincroniza Gradle y ejecuta la app.
