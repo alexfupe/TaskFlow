@@ -126,6 +126,8 @@ class TaskViewModel : ViewModel() {
     val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
     private var authToken: String? = null
 
+    private val tareasEnProceso = mutableSetOf<String>()
+
     fun login(u: String, p: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -177,6 +179,9 @@ class TaskViewModel : ViewModel() {
     }
 
     fun borrarTarea(id: String, onComplete: (Boolean, String) -> Unit) {
+        if (tareasEnProceso.contains(id)) return
+        tareasEnProceso.add(id)
+
         val token = authToken ?: return
         viewModelScope.launch {
             try {
@@ -187,6 +192,8 @@ class TaskViewModel : ViewModel() {
                 e.printStackTrace()
                 onComplete(false, "Error al eliminar la tarea")
                 cargarDatos()
+            } finally {
+                tareasEnProceso.remove(id)
             }
         }
     }
@@ -611,7 +618,9 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
     }
 }
 
-// --- UTILIDADES ---
+// ==========================================
+// 5. UTILIDADES
+// ==========================================
 
 @Composable
 fun FilterChipItem(text: String, selected: Boolean, onClick: () -> Unit) {
