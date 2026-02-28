@@ -33,13 +33,12 @@ private val LightColorScheme = lightColorScheme(
     background = Color.White,
     surface = Color(0xFFF3F3F3),
     onSurface = Color.Black
-    // Si faltan colores aquí, usará los de defecto de Material3
 )
 
 @Composable
 fun TaskFlowTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Lo dejamos en false para que use tus colores NegroFondo
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -53,7 +52,7 @@ fun TaskFlowTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography, // Asegúrate de tener el archivo Type.kt
+        typography = Typography,
         content = content
     )
 }

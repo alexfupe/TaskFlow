@@ -68,9 +68,9 @@ import java.util.*
 // 1. MODELOS DE DATOS Y RETROFIT
 // ==========================================
 
-data class LoginRequest(@SerializedName("username") val username: String, @SerializedName("password") val password: String)
+data class LoginRequest(@SerializedName("Username") val username: String, @SerializedName("Password") val password: String)
 data class LoginResponse(@SerializedName("token") val token: String, @SerializedName("user") val user: UserProfile)
-data class UserProfile(@SerializedName("name") val name: String, @SerializedName("email") val email: String, @SerializedName("role") val role: String)
+data class UserProfile(@SerializedName("Username") val name: String, @SerializedName("Email") val email: String, @SerializedName("Role") val role: String)
 data class ChangePasswordRequest(@SerializedName("newPassword") val newPassword: String)
 
 data class IncidenciaApi(
@@ -99,7 +99,7 @@ fun IncidenciaUI.toApi(): IncidenciaApi = IncidenciaApi(id = if (this.id.isNullO
 
 interface ApiService {
     @POST("users/login") suspend fun login(@Body request: LoginRequest): LoginResponse
-    @POST("users/logout") suspend fun logout(@Header("Authorization") token: String) // NUEVA: Avisar cierre sesión
+    @POST("users/logout") suspend fun logout(@Header("Authorization") token: String)
     @PUT("users/change-password") suspend fun changePassword(@Header("Authorization") token: String, @Body request: ChangePasswordRequest)
 
     @GET("tasks/my-tasks") suspend fun getIncidencias(@Header("Authorization") token: String): List<IncidenciaApi>
@@ -130,7 +130,6 @@ class TaskViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                // El backend ahora guarda la hora automáticamente al hacer login
                 val response = RetrofitClient.apiService.login(LoginRequest(u, p))
                 authToken = "Bearer ${response.token}"; _currentUser.value = response.user
                 onSuccess()
@@ -171,7 +170,6 @@ class TaskViewModel : ViewModel() {
             try {
                 _isLoading.value = true
                 RetrofitClient.apiService.updateIncidencia(token, incidencia.id, incidencia.toApi())
-                // Recargamos para que el backend nos devuelva la fecha de fin si se puso en HECHO
                 cargarDatos()
             }
             catch (e: Exception) { e.printStackTrace() } finally { _isLoading.value = false }
@@ -212,7 +210,6 @@ class TaskViewModel : ViewModel() {
     fun logout() {
         val token = authToken
         viewModelScope.launch {
-            // Mandamos el aviso al backend para que registre la hora de salida
             if (token != null) {
                 try { RetrofitClient.apiService.logout(token) } catch (e: Exception) { e.printStackTrace() }
             }
@@ -438,7 +435,6 @@ fun ProfileScreen(user: UserProfile, viewModel: TaskViewModel, onBack: () -> Uni
     }
 }
 
-// Búsqueda implementada
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, viewModel: TaskViewModel, onBack: () -> Unit, onRefresh: () -> Unit, onIncidenciaClick: (IncidenciaUI) -> Unit) {
@@ -463,7 +459,6 @@ fun IncidenciasListScreen(incidencias: List<IncidenciaUI>, isLoading: Boolean, v
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
 
-            // BUSCADOR DE TAREAS
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -552,7 +547,6 @@ fun DetalleIncidenciaScreen(incidencia: IncidenciaUI, onUpdate: (IncidenciaUI) -
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(incidencia.descripcion, fontSize = 16.sp, color = TextoGris)
 
-                // TEXTOS DE LAS FECHAS GENERADAS POR EL SERVIDOR
                 if (incidencia.createdAt.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Publicada: ${incidencia.createdAt}", fontSize = 12.sp, color = TextoGris)
